@@ -1,0 +1,46 @@
+{#<!DOCTYPE html>#}
+{#<html lang="en">#}
+{#<body>#}
+
+{#<form method="post">#}
+{#  {% csrf_token %}#}
+{#  {{ form.as_p }}#}
+{#  <button type="submit">Approximate</button>#}
+{#</form>#}
+
+{#</body>#}
+{#</html>#}
+
+{% extends 'base.html' %}
+{% load crispy_forms_tags %}
+
+{% block content %}
+{#  <form method="post">#}
+{#    {% csrf_token %}#}
+{#    {{ form }}#}
+{#    <button type="submit" class="btn btn-success">Approximate system</button>#}
+{#  </form>#}
+    Provide the information of the system using LaTeX. The variables allowed are <i>x_i</i> (i may vary from 1 to
+    {{ dimension }}) and <i>t</i>, index of a variable must be surrounded by '{}' (e.g. x_{1}).
+    <br>
+    <form method="post">
+     {% csrf_token %}
+     <div class="row">
+        <div class="col-6">
+              {% for field in form %}
+                {% if not forloop.counter|divisibleby:"2" %}
+                       {{ field|as_crispy_field }}
+                {%endif%}
+              {%endfor%}
+          </div>
+         <div class="col-6">
+              {% for field in form %}
+                {% if forloop.counter|divisibleby:"2" %}
+                       {{ field|as_crispy_field }}
+                {%endif%}
+              {%endfor%}
+         </div>
+     <div>
+         <button type="submit" class="btn btn-success">Approximate</button>
+    </form>
+{% endblock %}

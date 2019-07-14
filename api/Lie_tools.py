@@ -159,6 +159,10 @@ def get_basis_lie_elements(max_order):
     return res
 
 
+class LieElementsNotFound(Exception):
+    pass
+
+
 # start = time.time()
 # test = get_basis_lie_elements(13)
 # end = time.time()

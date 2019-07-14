@@ -12,7 +12,7 @@ x1, x2, x3, x4, t = sym.symbols('x_1 x_2 x_3 x_4 t')
 # a = sym.Matrix([0, x1, x2 + x1**2])
 # b = sym.Matrix([1, 0, 0])
 
-a = sym.Matrix([0, parse_latex(r'x_{1}'), parse_latex(r'x_{2} + x_{1}^{2}')])
+a = sym.Matrix([x1, x1 + x2**2, x2*x1])
 b = sym.Matrix([1, 0, 0])
 
 

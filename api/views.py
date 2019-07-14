@@ -4,6 +4,8 @@ from .forms import InputForm, DimensionForm
 from api.approximation_tools import ControlSystem
 from sympy.parsing.latex import parse_latex
 from django.http import FileResponse
+from django.contrib import messages
+from .Lie_tools import LieElementsNotFound
 
 # Create your views here.
 
@@ -34,9 +36,17 @@ def approximate(request):
             a = sym.Matrix(a)
             b = sym.Matrix(b)
             system = ControlSystem(a, b)
-            system.calc_approx_system()
-            system.generate_pdf('test_app')
-            return FileResponse(open(r'test_app.pdf', 'rb'), as_attachment=True, filename='test.pdf')
+            try:
+                system.calc_approx_system()
+            except LieElementsNotFound:
+                messages.error(request, 'Could not find necessary amount of linearly independent Lie elements '
+                                        'among currently calculated Lie algebra grading (up to 10th order).'
+                                        ' Try another system.')
+                return render(request, 'approximate.html', {'form': form, 'dimension': dimension})
+            else:
+                messages.success(request, 'The system has been successfully approximated!')
+                system.generate_pdf('test_app')
+                return FileResponse(open(r'test_app.pdf', 'rb'), as_attachment=True, filename='test.pdf')
     else:
         dimension = request.session['dimension']
         form = InputForm(dimension)

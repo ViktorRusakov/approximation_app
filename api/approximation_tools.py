@@ -5,7 +5,7 @@ import sympy as sym
 import numpy as np
 from functools import reduce
 from itertools import groupby
-from api.Lie_tools import unfold_lie_bracket
+from api.Lie_tools import unfold_lie_bracket, LieElementsNotFound
 from api.shuffle_tools import calc_shuffle_lin_comb
 
 
@@ -85,7 +85,12 @@ class ControlSystem:
                 lie_for_latex = lie_for_latex[:-1] + r' &' + r'''v(b_{{{}}})&={}\\'''.format(j, sym.latex(v.T))
                 text += lie_for_latex
                 j += 1
-        text += r'''\end{align*}'''
+                if j % 30 == 0:
+                    text += r'''\end{align*}\newpage
+                    \begin{align*}
+                    '''
+        if not j % 30 == 0:
+            text += r'''\end{align*}'''
         return text
 
     def get_lie_main_text(self):
@@ -156,7 +161,12 @@ class ControlSystem:
                         latex_text += value
                     text += latex_text + r' &' + r'''v(z_{{{}}})&={}\\'''.format(j, sym.latex(v.T))
                     j += 1
-        text += r'''\end{align*}'''
+                    if j % 30 == 0:
+                        text += r'''\end{align*}\newpage
+                                \begin{align*}
+                                '''
+        if not j % 30 == 0:
+            text += r'''\end{align*}'''
         return text
 
     def get_projections_text(self):
@@ -436,7 +446,7 @@ class ControlSystem:
                 new_mat = sym.Matrix.hstack(independent_coeffs, v)
                 new_rank = new_mat.rank()
                 if new_rank == rank:
-                    ideal[bracket] = independent[bracket]
+                    ideal[bracket] = v
                     independent.pop(bracket)
                 else:
                     independent[bracket]['coef'] = v
@@ -489,10 +499,7 @@ class ControlSystem:
                         independent_coeffs = sym.Matrix.hstack(independent_coeffs, rep[j])
                     count += len(nonzero)
             right_ideal[order] = ideal
-        self.basis_lie_elements = lie_coef
-        self.main_part_lie = main_part
-        self.right_ideal = right_ideal
-        return main_part, right_ideal
+        raise LieElementsNotFound()
 
     def calculate_lie_projections(self):
         """
@@ -524,7 +531,7 @@ class ControlSystem:
                 if bad_order == order:
                     for lie_elem in right_ideal[bad_order]:
                         elem = lie_elem.split('|')
-                        new_elem_repr = np.zeros((dim, 1), dtype=int)
+                        new_elem_repr = np.zeros((dim, 1), dtype=object)
                         for element in elem:
                             if 'x' not in element:
                                 unfolded = unfold_lie_bracket(element).split('|')
@@ -541,7 +548,7 @@ class ControlSystem:
                                         new_elem_repr -= moments_repr[elem[1:]]
                                     else:
                                         new_elem_repr += moments_repr[elem]
-                                new_elem_repr *= int(element[0])
+                                new_elem_repr *= sym.Rational(element[0])
                         order_matrix = order_matrix.row_join(sym.Matrix(new_elem_repr))
                     break
                 else:
@@ -550,7 +557,7 @@ class ControlSystem:
                     for lie_elem in right_ideal[bad_order]:
                         unfolded = lie_elem.split('|')
                         for alg_elem in algebra_elems:
-                            new_elem_repr = np.zeros((dim, 1))
+                            new_elem_repr = np.zeros((dim, 1), dtype=object)
                             for element in unfolded:
                                 if 'x' not in element:
                                     new_unfolded = unfold_lie_bracket(element).split('|')
@@ -567,7 +574,7 @@ class ControlSystem:
                                             new_elem_repr -= moments_repr[elem[1:] + '.' + alg_elem]
                                         else:
                                             new_elem_repr += moments_repr[elem + '.' + alg_elem]
-                                    new_elem_repr *= int(element[0])
+                                    new_elem_repr *= sym.Rational(element[0])
                             order_matrix = order_matrix.row_join(sym.Matrix(new_elem_repr))
 
             # если идеал не пустой, то ищем проекции Ли-элементов на его ортогональное дополнение

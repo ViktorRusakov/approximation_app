@@ -15,14 +15,20 @@
 {% load crispy_forms_tags %}
 
 {% block content %}
-{#  <form method="post">#}
-{#    {% csrf_token %}#}
-{#    {{ form }}#}
-{#    <button type="submit" class="btn btn-success">Approximate system</button>#}
-{#  </form>#}
     Provide the information of the system using LaTeX. The variables allowed are <i>x_i</i> (i may vary from 1 to
     {{ dimension }}) and <i>t</i>, index of a variable must be surrounded by '{}' (e.g. x_{1}).
-    <br>
+    <div class="container">
+        {% if messages %}
+            {% for message in messages %}
+                <div class="alert {{ message.tags }} alert-dismissible" role="alert">
+                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
+                        <span aria-hidden="true">&times;</span>
+                    </button>
+                    {{ message }}
+                </div>
+            {% endfor %}
+        {% endif %}
+    </div>
     <form method="post">
      {% csrf_token %}
      <div class="row">

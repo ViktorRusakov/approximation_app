@@ -1,52 +1,84 @@
-{#<!DOCTYPE html>#}
-{#<html lang="en">#}
-{#<body>#}
-
-{#<form method="post">#}
-{#  {% csrf_token %}#}
-{#  {{ form.as_p }}#}
-{#  <button type="submit">Approximate</button>#}
-{#</form>#}
-
-{#</body>#}
-{#</html>#}
-
 {% extends 'base.html' %}
 {% load crispy_forms_tags %}
 
 {% block content %}
-    Provide the information of the system using LaTeX. The variables allowed are <i>x_i</i> (i may vary from 1 to
-    {{ dimension }}) and <i>t</i>, index of a variable must be surrounded by '{}' (e.g. x_{1}).
     <div class="container">
         {% if messages %}
             {% for message in messages %}
-                <div class="alert {{ message.tags }} alert-dismissible" role="alert">
-                    <button type="button" class="close" data-dismiss="alert" aria-label="Close">
-                        <span aria-hidden="true">&times;</span>
-                    </button>
-                    {{ message }}
-                </div>
+                {% if not 'info' in message.tags %}
+                    <div class="alert {{ message.tags }} alert-dismissible" role="alert">
+                        {{ message }}
+                    </div>
+                {% endif %}
             {% endfor %}
         {% endif %}
     </div>
+    {% if algebra == 'fliess' %}
+        Fill in the information about the system (vectors a(x), b(x) and initial point x<sup>0</sup>) using LaTeX.
+        Index of a variable must be surrounded by '{}' (e.g. x_{1}), same with fractions (e.g. \frac{1}{2}).
+        Initial point should contain only numerical values.
+    {% else %}
+        Fill in the information about the system (vectors a(t, x) and b(t, x)) using LaTeX.
+        Index of a variable must be surrounded by '{}' (e.g. x_{1}), same with fractions (e.g. \frac{1}{2}).
+    {% endif %}
     <form method="post">
      {% csrf_token %}
-     <div class="row">
-        <div class="col-6">
-              {% for field in form %}
-                {% if not forloop.counter|divisibleby:"2" %}
-                       {{ field|as_crispy_field }}
-                {%endif%}
-              {%endfor%}
-          </div>
-         <div class="col-6">
-              {% for field in form %}
-                {% if forloop.counter|divisibleby:"2" %}
-                       {{ field|as_crispy_field }}
-                {%endif%}
-              {%endfor%}
-         </div>
-     <div>
-         <button type="submit" class="btn btn-success">Approximate</button>
+     {% if algebra == 'fliess' %}
+         <div class="row">
+            <div class="col-5">
+                  {% for field in form %}
+                    {% if field.name.0 == 'a' %}
+                           {{ field|as_crispy_field }}
+                    {%endif%}
+                  {%endfor%}
+              </div>
+             <div class="col-5">
+                  {% for field in form %}
+                    {% if field.name.0 == 'b' %}
+                           {{ field|as_crispy_field }}
+                    {%endif%}
+                  {%endfor%}
+             </div>
+             <div class="col-2">
+                  {% for field in form %}
+                    {% if field.name.0 == 'x' %}
+                           {{ field|as_crispy_field }}
+                    {%endif%}
+                  {%endfor%}
+             </div>
+         <div>
+     {% else %}
+         <div class="row">
+            <div class="col-6">
+                  {% for field in form %}
+                    {% if field.name.0 == 'a' %}
+                           {{ field|as_crispy_field }}
+                    {%endif%}
+                  {%endfor%}
+              </div>
+             <div class="col-6">
+                  {% for field in form %}
+                    {% if field.name.0 == 'b' %}
+                           {{ field|as_crispy_field }}
+                    {%endif%}
+                  {%endfor%}
+             </div>
+         <div>
+     {% endif %}
+    <div class="col-4">
+        <button type="submit" class="btn btn-success">Approximate</button>
+        <br/>
+    </div>
+    <div class="container">
+        {% if messages %}
+            {% for message in messages %}
+                {% if 'info' in message.tags %}
+                    <div class="alert {{ message.tags }} alert-dismissible" role="alert">
+                        {{ message }}
+                    </div>
+                {% endif %}
+            {% endfor %}
+        {% endif %}
+    </div>
     </form>
 {% endblock %}

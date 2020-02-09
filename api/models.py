@@ -1,3 +1,5 @@
 from django.db import models
 
-# Create your models here.
+
+class Report(models.Model):
+    report = models.FileField(default=None, blank=True, null=True)

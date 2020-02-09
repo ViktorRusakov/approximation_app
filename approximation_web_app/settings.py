@@ -76,6 +76,9 @@ TEMPLATES = [
 WSGI_APPLICATION = 'approximation_web_app.wsgi.application'
 
 
+MEDIA_ROOT = os.path.join(BASE_DIR, 'pdfs')
+MEDIA_URL = '/pdfs/'
+
 # Database
 # https://docs.djangoproject.com/en/2.1/ref/settings/#databases
 

@@ -3,18 +3,20 @@ import subprocess
 import pickle
 import sympy as sym
 import numpy as np
+import time
 from functools import reduce
 from itertools import groupby
 from api.Lie_tools import unfold_lie_bracket, LieElementsNotFound
-from api.shuffle_tools import calc_shuffle_lin_comb
+from api.shuffle_tools import calc_shuffle_lin_comb, calculate_combinations
+from approximation_web_app.settings import BASE_DIR
 
 
 class ControlSystem:
     
     t = sym.Symbol('t')
 
-    def __init__(self, a, b):
-        assert len(a) == len(b), 'Размерности векторов a и b не совпадают'
+    def __init__(self, a, b, init_point=None):
+        assert len(a) == len(b), 'Dimensions of vectors a and b are not equal'
         self.a = a
         self.b = b
         self.dim = len(a)
@@ -24,16 +26,18 @@ class ControlSystem:
         self.series_text = ''
         self.basis_lie_elements = {}
         self.main_part_lie = {}
-        self.right_ideal = {}
+        self.ideal = {}
         self.projections = {}
-        self.approx_system = sym.zeros(self.dim, 1)
+        self.b_0 = sym.zeros(self.dim, 1)
+        self.b_1 = sym.zeros(self.dim, 1)
+        self.init_point = init_point or sym.Matrix([0] * self.dim)
         
     def get_variables(self):
         n = self.dim
         variables = sym.symbols('x_{{1:{}}}'.format(n + 1))
         return list(variables)
 
-    def get_init_text(self):
+    def get_init_text(self, fliess=False):
         res = r'''
         \documentclass{article}
         \usepackage{amsmath}
@@ -53,7 +57,11 @@ class ControlSystem:
         x_dots = sym.symbols(r'\dot{{x}}_1:{}'.format(n + 1))
         u = sym.Symbol('u', commutative=False)
         for i in range(n):
-            res += r'''{} &= {}\\'''.format(sym.latex(x_dots[i]), sym.latex(a[i] + b[i]*u))
+            if fliess and i == n // 2:
+                res += r'''{} &= {}        &   x^0={}\\'''.format(sym.latex(x_dots[i]), sym.latex(a[i] + b[i]*u),
+                                                                  sym.latex(self.init_point.T))
+            else:
+                res += r'''{} &= {}\\'''.format(sym.latex(x_dots[i]), sym.latex(a[i] + b[i] * u))
         res += r'''\end{aligned}
         \right.
         \]
@@ -61,72 +69,78 @@ class ControlSystem:
         '''
         return res
 
-    def get_lie_basis_text(self):
+    def get_lie_basis_text(self, fliess=False):
         lie_elems = self.basis_lie_elements
         text = r'''\centerline{\Large\bf Basis Lie elements and their coefficients}
         \begin{align*}
         '''
         j = 1
+        var = 'eta' if fliess else 'xi'
         for order, brackets_info in lie_elems.items():
             text += r'''\mathcal{{A}}_{{{}}}: '''.format(order)
             for bracket, v in brackets_info.items():
                 if ']' not in bracket:
                     if '.' not in bracket:
-                        lie_for_latex = r'''b_{{{}}}&=\xi_{{{}}} '''.format(j, bracket)
+                        lie_for_latex = r'''b_{{{}}}&=\{}_{{{}}} '''.format(j, var, bracket)
                     else:
                         bracket = bracket.split('.')
-                        lie_for_latex = r'''b_{{{}}}&=[\xi_{{{}}}, \xi_{{{}}}] '''.format(j, bracket[0], bracket[1])
+                        lie_for_latex = r'''b_{{{}}}&=[\{}_{{{}}}, \{}_{{{}}}] '''.format(j, var, bracket[0],
+                                                                                          var, bracket[1])
                 else:
                     lie_split = bracket.split(']')
-                    lie_for_latex = r'''b_{{{}}}&=[[\xi_{{{}}}, \xi_{{{}}}],'''.format(j, lie_split[0][0],
-                                                                                       lie_split[0][-1])
+                    first_elem = lie_split[0].split('.')
+                    lie_for_latex = r'''b_{{{}}}&=[[\{}_{{{}}}, \{}_{{{}}}],'''.format(j, var, first_elem[0],
+                                                                                       var, first_elem[1])
                     for a in lie_split[1:]:
-                        lie_for_latex += r'''\xi_{{{}}}],'''.format(a)
-                lie_for_latex = lie_for_latex[:-1] + r' &' + r'''v(b_{{{}}})&={}\\'''.format(j, sym.latex(v.T))
+                        lie_for_latex += r'''\{}_{{{}}}],'''.format(var, a)
+                lie_for_latex = lie_for_latex[:-1] + r' &' + r'''{}(b_{{{}}})&={}\\'''.format('c' if fliess else 'v',
+                                                                                              j, sym.latex(v.T))
                 text += lie_for_latex
                 j += 1
                 if j % 30 == 0:
                     text += r'''\end{align*}\newpage
                     \begin{align*}
                     '''
-        if not j % 30 == 0:
-            text += r'''\end{align*}'''
+        text += r'''\end{align*}'''
         return text
 
-    def get_lie_main_text(self):
+    def get_lie_main_text(self, fliess=False):
         main_part = self.main_part_lie
         text = r'''\centerline{\Large\bf Lie elements for principal part}
         \begin{align*}
         '''
         j = 1
+        var = 'eta' if fliess else 'xi'
         for order, brackets_info in main_part.items():
             text += r'''\mathcal{{A}}_{{{}}}: '''.format(order)
             for bracket in brackets_info:
                 if ']' not in bracket:
                     if '.' not in bracket:
-                        lie_for_latex = r'''\ell_{{{}}}&=\xi_{{{}}} '''.format(j, bracket)
+                        lie_for_latex = r'''\ell_{{{}}}&=\{}_{{{}}} '''.format(j, var, bracket)
                     else:
                         bracket = bracket.split('.')
-                        lie_for_latex = r'''\ell_{{{}}}&=[\xi_{{{}}}, \xi_{{{}}}] '''.format(j, bracket[0], bracket[1])
+                        lie_for_latex = r'''\ell_{{{}}}&=[\{}_{{{}}}, \{}_{{{}}}] '''.format(j, var, bracket[0],
+                                                                                             var, bracket[1])
                 else:
                     lie_split = bracket.split(']')
                     first_elem = lie_split[0].split('.')
-                    lie_for_latex = r'''\ell_{{{}}}&=[[\xi_{{{}}}, \xi_{{{}}}],'''.format(j, first_elem[0],
-                                                                                          first_elem[1])
+                    lie_for_latex = r'''\ell_{{{}}}&=[[\{}_{{{}}}, \{}_{{{}}}],'''.format(j, var, first_elem[0],
+                                                                                          var, first_elem[1])
                     for a in lie_split[1:]:
-                        lie_for_latex += r'''\xi_{{{}}}],'''.format(a)
+                        lie_for_latex += r'''\{}_{{{}}}],'''.format(var, a)
                 lie_for_latex = lie_for_latex[:-1] + r'''\\'''
                 text += lie_for_latex
                 j += 1
         text += r'''\end{align*}'''
         return text
 
-    def get_right_ideal_text(self):
-        ideal = self.right_ideal
-        text = r'''\centerline{\Large\bf Right ideal elements}
-        \begin{align*}
-        '''
+    def get_ideal_text(self, fliess=False):
+        ideal = self.ideal
+        text = r'''\centerline{{\Large\bf {} ideal elements}}
+        \begin{{align*}}
+        '''.format('Left' if fliess else 'Right')
         j = 1
+        var = 'eta' if fliess else 'xi'
         for order, brackets_info in ideal.items():
             if brackets_info:
                 text += r'''\mathcal{{A}}_{{{}}}: '''.format(order)
@@ -141,16 +155,18 @@ class ControlSystem:
                             coef, element = '1', addend
                         if ']' not in element:
                             if '.' not in element:
-                                element_text = r'''\xi_{{{}}} '''.format(element)
+                                element_text = r'''\{}_{{{}}} '''.format(var, element)
                             else:
                                 element = element.split('.')
-                                element_text = r'''[\xi_{{{}}}, \xi_{{{}}}] '''.format(element[0], element[1])
+                                element_text = r'''[\{}_{{{}}}, \{}_{{{}}}] '''.format(var, element[0],
+                                                                                       var, element[1])
                         else:
                             lie_split = element.split(']')
                             first_elem = lie_split[0].split('.')
-                            element_text = r'''[[\xi_{{{}}}, \xi_{{{}}}],'''.format(first_elem[0], first_elem[1])
+                            element_text = r'''[[\{}_{{{}}}, \{}_{{{}}}],'''.format(var, first_elem[0],
+                                                                                    var, first_elem[1])
                             for a in lie_split[1:]:
-                                element_text += r'''\xi_{{{}}}],'''.format(a)
+                                element_text += r'''\{}_{{{}}}],'''.format(var, a)
                         if not coef.startswith('-'):
                             value += '+' + sym.latex(sym.Rational(coef) * sym.Symbol(element_text[:-1]))
                         else:
@@ -159,23 +175,28 @@ class ControlSystem:
                         latex_text += value[1:]
                     else:
                         latex_text += value
-                    text += latex_text + r' &' + r'''v(z_{{{}}})&={}\\'''.format(j, sym.latex(v.T))
+                    text += latex_text + r' &' + r'''{}(z_{{{}}})&={}\\'''.format('c' if fliess else 'v',
+                                                                                  j, sym.latex(v.T))
                     j += 1
                     if j % 30 == 0:
                         text += r'''\end{align*}\newpage
                                 \begin{align*}
                                 '''
-        if not j % 30 == 0:
-            text += r'''\end{align*}'''
+        text += r'''\end{align*}'''
         return text
 
-    def get_projections_text(self):
+    def get_projections_text(self, fliess=False):
         projections = self.projections
-        with open('api/lie_basis.pickle', 'rb') as lb:
-            lie_basis = pickle.load(lb)
+        if fliess:
+            with open(os.path.join(BASE_DIR, 'api/fliess/lie_basis.pickle'), 'rb') as lb:
+                lie_basis = pickle.load(lb)
+        else:
+            with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/lie_basis.pickle'), 'rb') as lb:
+                lie_basis = pickle.load(lb)
         text = r'''\centerline{\Large\bf Principal part}
         \begin{align*}
         '''
+        var = 'eta' if fliess else 'xi'
         for order, proj_info in projections.items():
             text += r'''\mathcal{{A}}_{{{}}}: '''.format(order)
             order_matrix = []
@@ -199,7 +220,7 @@ class ControlSystem:
                             coef, element = addend.split('x')
                         else:
                             coef, element = '1', addend
-                        element_text = r'''\xi_{{{}}}'''.format(element.replace('.', ''))
+                        element_text = r'''\{}_{{{}}}'''.format(var, element.replace('.', ''))
                         if not coef.startswith('-'):
                             value += '+' + sym.latex(sym.Rational(coef) * sym.Symbol(element_text))
                         else:
@@ -211,16 +232,18 @@ class ControlSystem:
                             basis_elem = order_lie_basis[i]
                             if ']' not in basis_elem:
                                 if '.' not in basis_elem:
-                                    element_text = r'''\xi_{{{}}} '''.format(basis_elem)
+                                    element_text = r'''\{}_{{{}}} '''.format(var, basis_elem)
                                 else:
                                     basis_elem = basis_elem.split('.')
-                                    element_text = r'''[\xi_{{{}}}, \xi_{{{}}}] '''.format(basis_elem[0], basis_elem[1])
+                                    element_text = r'''[\{}_{{{}}}, \{}_{{{}}}] '''.format(var, basis_elem[0],
+                                                                                           var, basis_elem[1])
                             else:
                                 lie_split = basis_elem.split(']')
                                 first_elem = lie_split[0].split('.')
-                                element_text = r'''[[\xi_{{{}}}, \xi_{{{}}}],'''.format(first_elem[0], first_elem[1])
+                                element_text = r'''[[\{}_{{{}}}, \{}_{{{}}}],'''.format(var, first_elem[0],
+                                                                                        var, first_elem[1])
                                 for a in lie_split[1:]:
-                                    element_text += r'''\xi_{{{}}}],'''.format(a)
+                                    element_text += r'''\{}_{{{}}}],'''.format(var, a)
                             if not coef.startswith('-'):
                                 value += '+' + sym.latex(sym.Rational(coef) * sym.Symbol(element_text[:-1]))
                             else:
@@ -234,7 +257,6 @@ class ControlSystem:
         return text
 
     def get_approx_system_text(self):
-        b = self.approx_system
         text = r'''\centerline{\Large\bf Approximating system}
         \[
         \left\{
@@ -243,42 +265,45 @@ class ControlSystem:
         n = self.dim
         x_dots = sym.symbols(r'\dot{{x}}_1:{}'.format(n + 1))
         u = sym.Symbol('u', commutative=False)
+        res = self.b_0 + self.b_1 * u
         for i in range(n):
-            text += r'''{} &= {}\\'''.format(sym.latex(x_dots[i]), sym.latex(b[i] * u))
+            text += r'''{} &= {}\\'''.format(sym.latex(x_dots[i]), sym.latex(res[i]))
         text += r'''\end{aligned}
         \right.
         \]
         '''
         return text
 
-    def generate_pdf(self, name='test'):
+    def generate_pdf(self, name='test', fliess=False):
         max_order = max(self.main_part_lie)
-        self.calc_series(max_order)
-        init_text = self.get_init_text()
+        self.calc_series(max_order, fliess)
+        init_text = self.get_init_text(fliess)
         series_text = self.series_text
-        lie_basis_text = self.get_lie_basis_text()
-        lie_main_part_text = self.get_lie_main_text()
-        right_ideal_text = self.get_right_ideal_text()
-        projections_text = self.get_projections_text()
+        lie_basis_text = self.get_lie_basis_text(fliess)
+        lie_main_part_text = self.get_lie_main_text(fliess)
+        right_ideal_text = self.get_ideal_text(fliess)
+        projections_text = self.get_projections_text(fliess)
         approx_system_text = self.get_approx_system_text()
         text = init_text + series_text + lie_basis_text + lie_main_part_text + right_ideal_text +\
                projections_text + approx_system_text
         text += r'''\end{document}'''
-        # os.chdir(path=r'C:\Users\User\Desktop\Python\approximation_web_app\pdfs')
+        os.chdir(os.path.join(BASE_DIR, 'pdfs\\'))
         with open('{}.tex'.format(name), 'w') as f:
             f.write(text)
 
         cmd = ['pdflatex', '-interaction', 'nonstopmode', '{}.tex'.format(name)]
-        proc = subprocess.Popen(cmd)
+        proc = subprocess.Popen(cmd, shell=True)
         proc.communicate()
 
         retcode = proc.returncode
         if not retcode == 0:
-            os.unlink('{}.pdf'.format(name))
+            # os.unlink('{}.pdf'.format(name))
             raise ValueError('Error {} executing command: {}'.format(retcode, ' '.join(cmd)))
 
         os.unlink('{}.tex'.format(name))
         os.unlink('{}.log'.format(name))
+        os.remove('{}.aux'.format(name))
+        os.chdir(BASE_DIR)
 
     def R_0(self, func):
         return func.diff(self.t) + func.jacobian(self.X) * self.a
@@ -292,7 +317,7 @@ class ControlSystem:
         else:
             return self.R_0(self.ad(power - 1, func)) - self.ad(power - 1, self.R_0(func))
 
-    def coefficient(self, indeces):
+    def coefficient(self, indeces, fliess=False):
         """
         Функция, считающая определенный коэффициент ряда.
         На вход подается строка из индексов, разделитель между индексами - '.'
@@ -303,6 +328,13 @@ class ControlSystem:
         
         func = self.E
         indeces = list(map(int, indeces.split('.')))
+        if fliess:
+            for index in indeces:
+                if index == 0:
+                    func = self.R_0(func)
+                else:
+                    func = self.R_1(func)
+            return func.subs(list(zip(self.X + [self.t], list(self.init_point) + [0])))
         for index in reversed(indeces):
             func = self.ad(index, func)
         res = func.subs(list(zip(self.X + [self.t], [0] * (self.dim + 1))))
@@ -321,7 +353,7 @@ class ControlSystem:
                 factor = sym.Rational(numerator, denominator)
             return factor * res
 
-    def calculate_coefficients(self, max_order):
+    def calculate_coefficients(self, max_order, fliess=False):
         """
         Подсчет коэффициентов ряда до заданного порядка
         включительно. На выходе получаем словарь, в котором ключ обозначает
@@ -339,42 +371,47 @@ class ControlSystem:
         """
 
         res = {}
-        with open('api/moments_grading.pickle', 'rb') as f:
-            indeces = pickle.load(f)
+        if fliess:
+            with open(os.path.join(BASE_DIR, 'api/fliess/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
+        else:
+            with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
         for i in range(1, max_order + 1):
             order_res = {}
             for index_set in indeces[i]:
-                order_res[index_set] = self.coefficient(index_set)
+                order_res[index_set] = self.coefficient(index_set, fliess)
             res[i] = order_res
         return res
 
-    def calc_series(self, max_order):
+    def calc_series(self, max_order, fliess=False):
         """
             Подсчет ряда системы до заданного порядка.
         """
-        
+
         res = sym.zeros(self.dim, 1)
         zero_vect = sym.zeros(self.dim, 1)
         text = r'''
         \centerline{\Large\bf Series}
         '''
-        eq_text = r'''x^0 = '''
-        coeffs = self.calculate_coefficients(max_order)
+        eq_text = r'''x{} = '''.format(r'(\theta)' if fliess else r'^0')
+        coeffs = self.calculate_coefficients(max_order, fliess)
         multline = False
         i = 1
+        var = 'eta' if fliess else 'xi'
         for key, value in coeffs.items():
             for index_set, coef in coeffs[key].items():
                 if coef != zero_vect:
-                    res += coef * sym.Symbol(r'\xi_{{{}}}'.format(
-                            index_set.replace('.', '')))
+                    res += coef * sym.Symbol(r'\{}_{{{}}}'.format(
+                        var, index_set.replace('.', '')))
                     if i == 9:
-                        eq_text += r'''\\ + {}{} +'''.format(sym.latex(coef), sym.latex(sym.Symbol(r'\xi_{{{}}}'.format(
-                            index_set.replace('.', '')))))
+                        eq_text += r'''\\ + {}{} +'''.format(sym.latex(coef), sym.latex(sym.Symbol(r'\{}_{{{}}}'.format(
+                            var, index_set.replace('.', '')))))
                         i = 0
                         multline = True
                     else:
-                        eq_text += r'''{}{} +'''.format(sym.latex(coef), sym.latex(sym.Symbol(r'\xi_{{{}}}'.format(
-                                    index_set.replace('.', '')))))
+                        eq_text += r'''{}{} +'''.format(sym.latex(coef), sym.latex(sym.Symbol(r'\{}_{{{}}}'.format(
+                            var, index_set.replace('.', '')))))
                     i += 1
         if multline:
             eq_text = r'''\begin{multline*}\\''' + eq_text[:-1] + r'''\end{multline*}'''
@@ -384,17 +421,21 @@ class ControlSystem:
         self.series_text = text + r'''\\'''
         return res
 
-    def sort_lie_elements(self):
+    def sort_lie_elements(self, fliess=False):
         """
             Находим первые n ЛНЗ Ли-элементов (из которых будет построена главная часть системы),
             остальные забрасываем в правый идеал.
         """
 
-        with open('api/lie_basis.pickle', 'rb') as lb:
-            lie_basis = pickle.load(lb)
+        if fliess:
+            with open(os.path.join(BASE_DIR, 'api/fliess/lie_basis.pickle'), 'rb') as lb:
+                lie_basis = pickle.load(lb)
+        else:
+            with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/lie_basis.pickle'), 'rb') as lb:
+                lie_basis = pickle.load(lb)
         lie_coef = {}
         main_part = {}
-        right_ideal = {}
+        ideal = {}
         count = 0                           # счетчик кол-ва эл-ов в главной части
         independent_coeffs = sym.Matrix()   # матрица из ЛНЗ коэф-ов
         rank = 0                            # ранг матрицы 
@@ -406,8 +447,8 @@ class ControlSystem:
             if count == self.dim:
                 self.basis_lie_elements = lie_coef
                 self.main_part_lie = main_part
-                self.right_ideal = right_ideal
-                return main_part, right_ideal
+                self.ideal = ideal
+                return main_part, ideal
 
             # Все Ли-элементы текущего порядка
             lie_elements = lie_basis[order].keys()
@@ -417,7 +458,7 @@ class ControlSystem:
             independent = lie_basis[order].copy()
             
             # Правый идеал текущего порядка
-            ideal = {}
+            order_ideal = {}
             
             # Проходим по каждому элементу
             for bracket in lie_elements:
@@ -429,14 +470,14 @@ class ControlSystem:
                 unfolded = unfold_lie_bracket(bracket).split('|')
                 for element in unfolded:
                     if element.startswith('-'):
-                        v -= self.coefficient(element[1:])
+                        v -= self.coefficient(element[1:], fliess)
                     else:
-                        v += self.coefficient(element)
+                        v += self.coefficient(element, fliess)
                 lie_coef_order[bracket] = v
                         
                 # Если нулевой, то сразу забрасываем в идеал
                 if v == zero_vect:
-                    ideal[bracket] = v
+                    order_ideal[bracket] = v
                     independent.pop(bracket)
                     continue
 
@@ -489,7 +530,7 @@ class ControlSystem:
                                     nonzero.remove(i)
                                 except ValueError:
                                     pass
-                        ideal[bad_elem[:-1]] = value
+                        order_ideal[bad_elem[:-1]] = value
                     if len(kernel) == 1:
                         nonzero = nonzero[:-1]
                     main_part[order] = {
@@ -498,19 +539,23 @@ class ControlSystem:
                     for j in nonzero:
                         independent_coeffs = sym.Matrix.hstack(independent_coeffs, rep[j])
                     count += len(nonzero)
-            right_ideal[order] = ideal
+            ideal[order] = order_ideal
         raise LieElementsNotFound()
 
-    def calculate_lie_projections(self):
+    def calculate_lie_projections(self, fliess=False):
         """
         Подсчет проекций первых self.dim ЛНЗ Ли-элементов на ортогональное дополнение к правому идеалу
         """
 
-        main_part, right_ideal = self.sort_lie_elements()
+        main_part, ideal = self.sort_lie_elements(fliess)
         projections = {}
-        with open('api/moments_grading.pickle', 'rb') as f:
-            indeces = pickle.load(f)
-        main_orders, bad_orders = main_part.keys(), right_ideal.keys()
+        if fliess:
+            with open(os.path.join(BASE_DIR, 'api/fliess/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
+        else:
+            with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
+        main_orders, bad_orders = main_part.keys(), ideal.keys()
         i = 1
 
         # Проходим по всем порядкам элементов для главной части
@@ -518,9 +563,8 @@ class ControlSystem:
             order_matrix = sym.Matrix()
             order_projections = []
             moments = indeces[order]
-            # moments_repr = indeces[order]
             dim = len(moments)
-            basis = np.eye(dim, dtype=int)
+            basis = np.eye(dim, dtype=np.int)
             moments_repr = {moments[i]: basis[:, [i]] for i in range(dim)}
 
             # По всем порядкам элементов правого идеала (дополняем правый идеал домножением элементов из идеала
@@ -529,7 +573,7 @@ class ControlSystem:
 
                 # Если дошли до текущего порядка элементов главной части, то домножать ни на что не надо
                 if bad_order == order:
-                    for lie_elem in right_ideal[bad_order]:
+                    for lie_elem in ideal[bad_order]:
                         elem = lie_elem.split('|')
                         new_elem_repr = np.zeros((dim, 1), dtype=object)
                         for element in elem:
@@ -554,7 +598,7 @@ class ControlSystem:
                 else:
                     # Элементы подалгебры, которыми будем дополнять идеал
                     algebra_elems = indeces[order - bad_order]
-                    for lie_elem in right_ideal[bad_order]:
+                    for lie_elem in ideal[bad_order]:
                         unfolded = lie_elem.split('|')
                         for alg_elem in algebra_elems:
                             new_elem_repr = np.zeros((dim, 1), dtype=object)
@@ -563,23 +607,38 @@ class ControlSystem:
                                     new_unfolded = unfold_lie_bracket(element).split('|')
                                     for elem in new_unfolded:
                                         if elem.startswith('-'):
-                                            new_elem_repr -= moments_repr[elem[1:] + '.' + alg_elem]
+                                            if fliess:
+                                                new_elem_repr -= moments_repr[alg_elem + '.' + elem[1:]]
+                                            else:
+                                                new_elem_repr -= moments_repr[elem[1:] + '.' + alg_elem]
                                         else:
-                                            new_elem_repr += moments_repr[elem + '.' + alg_elem]
+                                            if fliess:
+                                                new_elem_repr += moments_repr[alg_elem + '.' + elem]
+                                            else:
+                                                new_elem_repr += moments_repr[elem + '.' + alg_elem]
                                 else:
                                     element = element.split('x')
                                     new_unfolded = unfold_lie_bracket(element[1]).split('|')
                                     for elem in new_unfolded:
                                         if elem.startswith('-'):
-                                            new_elem_repr -= moments_repr[elem[1:] + '.' + alg_elem]
+                                            if fliess:
+                                                new_elem_repr -= moments_repr[alg_elem + '.' + elem[1:]]
+                                            else:
+                                                new_elem_repr -= moments_repr[elem[1:] + '.' + alg_elem]
                                         else:
-                                            new_elem_repr += moments_repr[elem + '.' + alg_elem]
+                                            if fliess:
+                                                new_elem_repr += moments_repr[alg_elem + '.' + elem]
+                                            else:
+                                                new_elem_repr += moments_repr[elem + '.' + alg_elem]
                                     new_elem_repr *= sym.Rational(element[0])
                             order_matrix = order_matrix.row_join(sym.Matrix(new_elem_repr))
 
             # если идеал не пустой, то ищем проекции Ли-элементов на его ортогональное дополнение
             if order_matrix:
-                transpose = order_matrix.T
+                rank = order_matrix.rank()
+                transpose = order_matrix.T.echelon_form()[:rank, :]
+                order_matrix = transpose.T
+                # transpose = order_matrix.T
                 multi = transpose * order_matrix
                 for a, v in main_part[order].items():
                     a_2 = v['repr'] - order_matrix * multi.LUsolve(transpose * v['repr'])
@@ -590,7 +649,8 @@ class ControlSystem:
                     order_projections.append({
                         'index': i,
                         'vector_repr': a_2,
-                        'algebra_repr': a2_algebra[:-1]
+                        'algebra_repr': a2_algebra[:-1],
+                        'order': order
                     })
                     i += 1
 
@@ -599,24 +659,29 @@ class ControlSystem:
                 for a, v in main_part[order].items():
                     unfolded = unfold_lie_bracket(a)
                     order_projections.append({
-                            'index': i,
-                            'vector_repr': v['repr'],
-                            'algebra_repr': unfolded
+                        'index': i,
+                        'vector_repr': v['repr'],
+                        'algebra_repr': unfolded,
+                        'order': order
                     })
                     i += 1
             projections[order] = order_projections
         self.projections = projections
         return projections
     
-    def calc_approx_system(self):
+    def calc_approx_system(self, fliess=False):
         """
         Подсчет аппроксимирующей системы.
         """
-        projections = self.calculate_lie_projections()
-        with open('api/moments_grading.pickle', 'rb') as f:
-            indeces = pickle.load(f)
+        projections = self.calculate_lie_projections(fliess)
+        start = time.time()
+        if fliess:
+            with open(os.path.join(BASE_DIR, 'api/fliess/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
+        else:
+            with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
         orders = list(projections.keys())
-        b_final = sym.zeros(self.dim, 1)
         for order in orders:
             order_projections = projections[order]
             for projection in order_projections:
@@ -627,15 +692,27 @@ class ControlSystem:
                         coef = -sym.Rational(value[0])
                     else:
                         coef = sym.Rational('-1')
-                    b_final[projection['index'] - 1] = coef * self.t**int(value[-1])
+                    if fliess:
+                        if value[-1] == '0':
+                            self.b_0[projection['index'] - 1] = -coef
+                        else:
+                            self.b_1[projection['index'] - 1] = -coef
+                    else:
+                        self.b_1[projection['index'] - 1] = coef * self.t**int(value[-1])
                 else:
                     # группировка моментов по одинаковому последнему индексу и сортировка по нему
-                    grouped = {k: [m for m in g] for k, g in groupby(sorted(projection['algebra_repr'].split('|'),
-                                                                            key=lambda x: x.split('.')[-1]),
-                                                                     key=lambda x: x[-1])}
-                    b = 0
+                    if fliess:
+                        grouped = {k: [m for m in g] for k, g in groupby(sorted(projection['algebra_repr'].split('|'),
+                                                                                key=lambda x: x.split('.')[0][-1]),
+                                                                         key=lambda x: x.split('x')[-1].split('.')[0][-1])}
+                    else:
+                        grouped = {k: [m for m in g] for k, g in groupby(sorted(projection['algebra_repr'].split('|'),
+                                                                                key=lambda x: x.split('.')[-1]),
+                                                                         key=lambda x: x[-1])}
                     for decomp_index, value in grouped.items():
-                        cur_order = order - 1 - int(decomp_index)  # порядок элементов без последнего индекса
+                        cur_order = order - 1  # порядок элементов без последнего индекса
+                        if not fliess:
+                            cur_order -= int(decomp_index)
                         if cur_order == 0:
                             # если момент был однородным, то сразу пишем результат
                             split_value = value[0].split('x')
@@ -643,84 +720,99 @@ class ControlSystem:
                                 coef = -sym.Rational(split_value[0])
                             else:
                                 coef = sym.Rational('-1')
-                            b += coef * self.t**(order - 1)
+                            if fliess:
+                                if decomp_index == '0':
+                                    self.b_0[projection['index'] - 1] += -coef * sym.Symbol(
+                                        'x_{}'.format(split_value[-1]))
+                                else:
+                                    self.b_1[projection['index'] - 1] += -coef * sym.Symbol(
+                                        'x_{}'.format(split_value[-1]))
+                            else:
+                                self.b_1[projection['index'] - 1] += coef * self.t ** int(split_value[-1])
                             continue
                         moments = indeces[cur_order]
-                        # moments_repr = indeces[cur_order]
                         dim = len(moments)
                         basis = np.eye(dim, dtype=int)
                         moments_repr = {moments[i]: basis[:, [i]] for i in range(dim)}
                         order_matrix = sym.Matrix()    # матрица представлений шафл-элементов текущего порядка
                         order_shuffle_basis = []      # шафл-элементы текущего порядка
-
-                        # Проходим по всем предыдущим порядкам, чтобы посчитать всевозможные шафл-произведения
-                        # предыдущих элементов так, чтобы получить текущий порядок
-                        for i, order_1 in enumerate(orders):
-                            order_1_elems = projections[order_1]
-
-                            # Если дошли до текущего порядка, то останавливаемся
-                            if order_1 == cur_order:
-                                for element in order_1_elems:
-                                    order_shuffle_basis.append(str(element['index']))
-                                    order_matrix = order_matrix.row_join(sym.Matrix(element['vector_repr']))
+                        previous_elements = []
+                        for prev_order in orders:
+                            if prev_order > cur_order:
                                 break
-
-                            # Если попался порядок, который делит текущий, то значит элементы этого порядка можно
-                            # повысить до текущего с помошью самоумножения (шафлом)
-                            if cur_order % order_1 == 0:
-                                count = cur_order // order_1
-                                for elem in order_1_elems:
-                                    index = elem['index']
-                                    order_shuffle_basis.append(str(index) + (count - 1) * '*{}'.format(index))
-                                    shuffle_res = calc_shuffle_lin_comb(elem['algebra_repr'], x_count=count)
-                                    shuffle_res_repr = sym.zeros(dim, 1)
-                                    shuffle_split = shuffle_res.split('|')
-                                    for shuffle_elem in shuffle_split:
-                                        if 'x' not in shuffle_elem:
-                                            coef = sym.Rational('1')
-                                            moment = shuffle_split
-                                        else:
-                                            split = shuffle_elem.split('x')
-                                            coef, moment = sym.Rational(split[0]), split[1]
-                                        shuffle_res_repr += coef * sym.Matrix(moments_repr[moment])
-                                    order_matrix = order_matrix.row_join(shuffle_res_repr)
-
-                            # Проходимся по порядком старше и проверяем можно ли составить шафл-комбинации
-                            for order_2 in orders[i+1:]:
-                                if order_2 + order_1 > cur_order:
-                                    break
-                                limit_1 = cur_order // order_1
-                                limit_2 = cur_order // order_2
-                                order_2_elems = projections[order_2]
-                                for j in range(1, limit_1 + 1):
-                                    for k in range(1, limit_2 + 1):
-                                        if j * order_1 + k * order_2 == cur_order:
-                                            for elem_1 in order_1_elems:
-                                                index_1 = elem_1['index']
-                                                addend_1 = str(index_1) + (j - 1) * '*{}'.format(index_1) + '*'
-                                                for elem_2 in order_2_elems:
-                                                    index_2 = elem_2['index']
-                                                    addend_2 = str(index_2) + (k - 1) * '*{}'.format(index_2)
-                                                    order_shuffle_basis.append(addend_1 + addend_2)
-                                                    shuffle_res = calc_shuffle_lin_comb(elem_1['algebra_repr'],
-                                                                                        elem_2['algebra_repr'],
-                                                                                        x_count=j,
-                                                                                        y_count=k)
-                                                    shuffle_res_repr = sym.zeros(dim, 1)
-                                                    shuffle_split = shuffle_res.split('|')
-                                                    for shuffle_elem in shuffle_split:
-                                                        if 'x' not in shuffle_elem:
-                                                            coef = sym.Rational('1')
-                                                            moment = shuffle_split
-                                                        else:
-                                                            split = shuffle_elem.split('x')
-                                                            coef, moment = sym.Rational(split[0]), split[1]
-                                                        shuffle_res_repr += coef * sym.Matrix(moments_repr[moment])
-                                                    order_matrix = order_matrix.row_join(shuffle_res_repr)
+                            for proj in projections[prev_order]:
+                                previous_elements.append(proj)
+                        all_combinations = calculate_combinations(cur_order, previous_elements)
+                        for combination in all_combinations:
+                            basis_elem = ''
+                            shuffle_res = ''
+                            items_len = len(combination)
+                            if items_len == 1:
+                                shuffle_res = calc_shuffle_lin_comb(x=previous_elements[0]['algebra_repr'],
+                                                                    x_count=combination[0])
+                                proj_index = previous_elements[0]['index']
+                                basis_elem = (str(proj_index) + (combination[0] - 1) * '*{}'.format(proj_index))
+                            else:
+                                for ind in range(items_len - 1):
+                                    if ind == 0:
+                                        shuffle_res = calc_shuffle_lin_comb(
+                                            previous_elements[0]['algebra_repr'],
+                                            previous_elements[1]['algebra_repr'],
+                                            combination[0],
+                                            combination[1]
+                                        )
+                                        if combination[0]:
+                                            proj_index = previous_elements[0]['index']
+                                            basis_elem += (str(proj_index) + (combination[0] - 1) * '*{}'.format(
+                                                proj_index))
+                                            if combination[1]:
+                                                basis_elem += '*'
+                                        if combination[1]:
+                                            proj_index = previous_elements[1]['index']
+                                            basis_elem += str(proj_index) + (combination[1] - 1) * '*{}'.format(
+                                                proj_index)
+                                    else:
+                                        shuffle_res = calc_shuffle_lin_comb(
+                                            shuffle_res,
+                                            previous_elements[ind + 1]['algebra_repr'],
+                                            1,
+                                            combination[ind + 1]
+                                        )
+                                        if combination[ind + 1]:
+                                            proj_index = previous_elements[ind + 1]['index']
+                                            if basis_elem:
+                                                basis_elem += '*'
+                                            basis_elem += str(proj_index) + (combination[ind + 1] - 1) * '*{}'.format(proj_index)
+                            order_shuffle_basis.append(basis_elem)
+                            shuffle_res_repr = sym.zeros(dim, 1)
+                            shuffle_split = shuffle_res.split('|')
+                            for shuffle_elem in shuffle_split:
+                                if 'x' not in shuffle_elem:
+                                    coef = sym.Rational('1')
+                                    if shuffle_elem.startswith('-'):
+                                        coef *= -1
+                                        moment = shuffle_elem[1:]
+                                    else:
+                                        moment = shuffle_elem
+                                else:
+                                    split = shuffle_elem.split('x')
+                                    coef, moment = sym.Rational(split[0]), split[1]
+                                shuffle_res_repr += coef * sym.Matrix(moments_repr[moment])
+                            order_matrix = order_matrix.row_join(shuffle_res_repr)
                         algebra_repr = sym.zeros(dim, 1)
                         for elem in value:
-                            element = '.'.join(elem.split('.')[:-1])
-                            element = element.split('x')
+                            if fliess:
+                                if 'x' in elem:
+                                    element = elem.split('x')
+                                    element[-1] = element[-1][2:]
+                                else:
+                                    if elem.startswith('-'):
+                                        element = ['-' + elem[3:]]
+                                    else:
+                                        element = [elem[2:]]
+                            else:
+                                element = '.'.join(elem.split('.')[:-1])
+                                element = element.split('x')
                             if len(element) == 1:
                                 if elem.startswith('-'):
                                     algebra_repr -= sym.Matrix(moments_repr[element[0][1:]])
@@ -737,6 +829,12 @@ class ControlSystem:
                                 elem_res = 1
                                 for e in basis_elem:
                                     elem_res *= sym.Symbol('x{}'.format(e))
-                                b += -shuffle_repr[i] * self.t**int(decomp_index) * elem_res
-                    b_final[projection['index'] - 1] = b
-        self.approx_system = b_final
+                                if fliess:
+                                    if decomp_index == '0':
+                                        self.b_0[projection['index'] - 1] += shuffle_repr[i] * elem_res
+                                    else:
+                                        self.b_1[projection['index'] - 1] += shuffle_repr[i] * elem_res
+                                else:
+                                    self.b_1[projection['index'] - 1] += -shuffle_repr[i] * self.t**int(decomp_index) * elem_res
+        end = time.time()
+        print('System approximation:', round(end - start, 2), 'sec.')

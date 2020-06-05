@@ -1,6 +1,6 @@
 antlr4-python3-runtime==4.8
 asgiref==3.2.3
-Django==3.0.3
+Django==3.0.7
 django-crispy-forms==1.8.1
 mpmath==1.1.0
 numpy==1.18.1

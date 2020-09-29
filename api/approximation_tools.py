@@ -3,7 +3,6 @@ import subprocess
 import pickle
 import sympy as sym
 import numpy as np
-import time
 from functools import reduce
 from itertools import groupby
 from api.Lie_tools import unfold_lie_bracket, LieElementsNotFound
@@ -12,7 +11,7 @@ from approximation_web_app.settings import BASE_DIR
 
 
 class ControlSystem:
-    
+
     t = sym.Symbol('t')
 
     def __init__(self, a, b, init_point=None):
@@ -30,8 +29,10 @@ class ControlSystem:
         self.projections = {}
         self.b_0 = sym.zeros(self.dim, 1)
         self.b_1 = sym.zeros(self.dim, 1)
+        self.b_0_stationary = sym.zeros(self.dim, 1)
+        self.b_1_stationary = sym.zeros(self.dim, 1)
         self.init_point = init_point or sym.Matrix([0] * self.dim)
-        
+
     def get_variables(self):
         n = self.dim
         variables = sym.symbols('x_{{1:{}}}'.format(n + 1))
@@ -99,8 +100,8 @@ class ControlSystem:
                 j += 1
                 if j % 30 == 0:
                     text += r'''\end{align*}\newpage
-                    \begin{align*}
-                    '''
+                            \begin{align*}
+                            '''
         text += r'''\end{align*}'''
         return text
 
@@ -271,6 +272,33 @@ class ControlSystem:
         text += r'''\end{aligned}
         \right.
         \]
+        \\
+        '''
+        return text
+
+    def get_stationary_approx_system_text(self):
+        text = r'''\centerline{\Large\bf Stationary approximating system}'''
+        if not self.b_0_stationary or not self.b_1_stationary:
+            text += r'''
+            \\
+            \centerline{Stationary approximation does not exist}
+            '''
+            return text
+        else:
+            text += r'''
+                \[
+                \left\{
+                \begin{aligned}
+            '''
+        n = self.dim
+        x_dots = sym.symbols(r'\dot{{x}}_1:{}'.format(n + 1))
+        u = sym.Symbol('u', commutative=False)
+        res = self.b_0_stationary + self.b_1_stationary * u
+        for i in range(n):
+            text += r'''{} &= {}\\'''.format(sym.latex(x_dots[i]), sym.latex(res[i]))
+        text += r'''\end{aligned}
+        \right.
+        \]
         '''
         return text
 
@@ -284,20 +312,23 @@ class ControlSystem:
         right_ideal_text = self.get_ideal_text(fliess)
         projections_text = self.get_projections_text(fliess)
         approx_system_text = self.get_approx_system_text()
-        text = init_text + series_text + lie_basis_text + lie_main_part_text + right_ideal_text +\
-               projections_text + approx_system_text
+        text = init_text + series_text + lie_basis_text + lie_main_part_text + right_ideal_text + projections_text +\
+               approx_system_text
+        if not fliess:
+            stationary_approx_system_text = self.get_stationary_approx_system_text()
+            text += stationary_approx_system_text
         text += r'''\end{document}'''
-        os.chdir(os.path.join(BASE_DIR, 'pdfs\\'))
+        os.chdir(os.path.join(BASE_DIR, 'pdfs/'))
         with open('{}.tex'.format(name), 'w') as f:
             f.write(text)
 
         cmd = ['pdflatex', '-interaction', 'nonstopmode', '{}.tex'.format(name)]
-        proc = subprocess.Popen(cmd, shell=True)
+        proc = subprocess.Popen(cmd)
         proc.communicate()
 
         retcode = proc.returncode
         if not retcode == 0:
-            # os.unlink('{}.pdf'.format(name))
+            os.unlink('{}.pdf'.format(name))
             raise ValueError('Error {} executing command: {}'.format(retcode, ' '.join(cmd)))
 
         os.unlink('{}.tex'.format(name))
@@ -307,10 +338,10 @@ class ControlSystem:
 
     def R_0(self, func):
         return func.diff(self.t) + func.jacobian(self.X) * self.a
-    
+
     def R_1(self, func):
         return func.jacobian(self.X) * self.b
-    
+
     def ad(self, power, func):
         if power == 0:
             return self.R_1(func)
@@ -322,10 +353,10 @@ class ControlSystem:
         Функция, считающая определенный коэффициент ряда.
         На вход подается строка из индексов, разделитель между индексами - '.'
         (разделитель необходим так как индексы бывают двузначные)
-        
+
         Пример: indeces = '1.2.3' => coefficient(indeces) = v_123
         """
-        
+
         func = self.E
         indeces = list(map(int, indeces.split('.')))
         if fliess:
@@ -360,8 +391,8 @@ class ControlSystem:
         порядок, а значение ключа - соответствующие этому порядку элементы
         (также задаются с помощью словаря, ключ - индекс коэффициента,
         значение - посчитанное значение коэффициента)
-        
-        Пример: 
+
+        Пример:
             max_order = 3 => calculate_coefficients(max_order) =
             {
                 1: {'0': v_0},
@@ -403,7 +434,7 @@ class ControlSystem:
             for index_set, coef in coeffs[key].items():
                 if coef != zero_vect:
                     res += coef * sym.Symbol(r'\{}_{{{}}}'.format(
-                        var, index_set.replace('.', '')))
+                            var, index_set.replace('.', '')))
                     if i == 9:
                         eq_text += r'''\\ + {}{} +'''.format(sym.latex(coef), sym.latex(sym.Symbol(r'\{}_{{{}}}'.format(
                             var, index_set.replace('.', '')))))
@@ -411,7 +442,7 @@ class ControlSystem:
                         multline = True
                     else:
                         eq_text += r'''{}{} +'''.format(sym.latex(coef), sym.latex(sym.Symbol(r'\{}_{{{}}}'.format(
-                            var, index_set.replace('.', '')))))
+                                    var, index_set.replace('.', '')))))
                     i += 1
         if multline:
             eq_text = r'''\begin{multline*}\\''' + eq_text[:-1] + r'''\end{multline*}'''
@@ -453,16 +484,16 @@ class ControlSystem:
             # Все Ли-элементы текущего порядка
             lie_elements = lie_basis[order].keys()
             lie_coef_order = {}
-            
+
             # Независимые Ли-элементы текущего порядка
             independent = lie_basis[order].copy()
-            
+
             # Правый идеал текущего порядка
             order_ideal = {}
-            
+
             # Проходим по каждому элементу
             for bracket in lie_elements:
-                
+
                 # Коэффициент при элементе
                 v = sym.zeros(self.dim, 1)
 
@@ -474,7 +505,7 @@ class ControlSystem:
                     else:
                         v += self.coefficient(element, fliess)
                 lie_coef_order[bracket] = v
-                        
+
                 # Если нулевой, то сразу забрасываем в идеал
                 if v == zero_vect:
                     order_ideal[bracket] = v
@@ -487,7 +518,7 @@ class ControlSystem:
                 new_mat = sym.Matrix.hstack(independent_coeffs, v)
                 new_rank = new_mat.rank()
                 if new_rank == rank:
-                    ideal[bracket] = v
+                    order_ideal[bracket] = v
                     independent.pop(bracket)
                 else:
                     independent[bracket]['coef'] = v
@@ -499,13 +530,13 @@ class ControlSystem:
             if independent:
                 brackets, data = zip(*independent.items())
                 rep = [p['coef'] for p in data]
-                
+
                 # Добавляем все найденные незав. коэф. в матрицу коэф-ов
                 # предыдущих порядков
                 new_coef_mat = np.concatenate(rep).reshape((-1, len(rep)), order='F')
                 new_mat = sym.Matrix.hstack(independent_coeffs, sym.Matrix(new_coef_mat))
                 new_rank = new_mat.rank()
-                
+
                 # Если ранг м-цы повысился на добавленное кол-во элементов,
                 # то забрасываем все в главную часть, а в идеал - ничего,
                 # если нет, то ищем какие лин. комб. пойдут в идеал
@@ -564,7 +595,7 @@ class ControlSystem:
             order_projections = []
             moments = indeces[order]
             dim = len(moments)
-            basis = np.eye(dim, dtype=np.int)
+            basis = np.eye(dim, dtype=int)
             moments_repr = {moments[i]: basis[:, [i]] for i in range(dim)}
 
             # По всем порядкам элементов правого идеала (дополняем правый идеал домножением элементов из идеала
@@ -579,19 +610,19 @@ class ControlSystem:
                         for element in elem:
                             if 'x' not in element:
                                 unfolded = unfold_lie_bracket(element).split('|')
-                                for elem in unfolded:
-                                    if elem.startswith('-'):
-                                        new_elem_repr -= moments_repr[elem[1:]]
+                                for addend in unfolded:
+                                    if addend.startswith('-'):
+                                        new_elem_repr -= moments_repr[addend[1:]]
                                     else:
-                                        new_elem_repr += moments_repr[elem]
+                                        new_elem_repr += moments_repr[addend]
                             else:
                                 element = element.split('x')
                                 unfolded = unfold_lie_bracket(element[1]).split('|')
-                                for elem in unfolded:
-                                    if elem.startswith('-'):
-                                        new_elem_repr -= moments_repr[elem[1:]]
+                                for addend in unfolded:
+                                    if addend.startswith('-'):
+                                        new_elem_repr -= moments_repr[addend[1:]]
                                     else:
-                                        new_elem_repr += moments_repr[elem]
+                                        new_elem_repr += moments_repr[addend]
                                 new_elem_repr *= sym.Rational(element[0])
                         order_matrix = order_matrix.row_join(sym.Matrix(new_elem_repr))
                     break
@@ -668,13 +699,474 @@ class ControlSystem:
             projections[order] = order_projections
         self.projections = projections
         return projections
-    
+
+    def calc_stationary_approx_system(self, fliess=False):
+        """
+        Подсчет аппроксимирующей системы.
+        """
+        projections = self.calculate_lie_projections(fliess)
+        if fliess:
+            with open(os.path.join(BASE_DIR, 'api/fliess/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
+        else:
+            with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/moments_grading.pickle'), 'rb') as f:
+                indeces = pickle.load(f)
+        orders = list(projections.keys())
+        for order in orders:
+            order_projections = projections[order]
+            for projection in order_projections:
+                # Если проекция это однородный момент, то можно сразу записывать результат
+                if '.' not in projection['algebra_repr']:
+                    value = projection['algebra_repr'].split('x')
+                    if len(value) == 2:
+                        coef = -sym.Rational(value[0])
+                    else:
+                        coef = sym.Rational('-1')
+                    if fliess:
+                        if value[-1] == '0':
+                            self.b_0[projection['index'] - 1] = -coef
+                        else:
+                            self.b_1[projection['index'] - 1] = -coef
+                    else:
+                        self.b_1[projection['index'] - 1] = coef * self.t**int(value[-1])
+                else:
+                    # группировка моментов по одинаковому последнему индексу и сортировка по нему
+                    if fliess:
+                        grouped = {k: [m for m in g] for k, g in groupby(sorted(projection['algebra_repr'].split('|'),
+                                                                                key=lambda x: x.split('.')[0][-1]),
+                                                                         key=lambda x: x.split('x')[-1].split('.')[0][-1])}
+                    else:
+                        grouped = {k: [m for m in g] for k, g in groupby(sorted(projection['algebra_repr'].split('|'),
+                                                                                key=lambda x: x.split('.')[-1]),
+                                                                         key=lambda x: x[-1])}
+                    for decomp_index, value in grouped.items():
+                        cur_order = order - 1  # порядок элементов без последнего индекса
+                        if not fliess:
+                            cur_order -= int(decomp_index)
+                        if cur_order == 0:
+                            # если момент был однородным, то сразу пишем результат
+                            split_value = value[0].split('x')
+                            if len(split_value) == 2:
+                                coef = -sym.Rational(split_value[0])
+                            else:
+                                coef = sym.Rational('-1')
+                            if fliess:
+                                if decomp_index == '0':
+                                    self.b_0[projection['index'] - 1] += -coef * sym.Symbol(
+                                        'x_{}'.format(split_value[-1]))
+                                else:
+                                    self.b_1[projection['index'] - 1] += -coef * sym.Symbol(
+                                        'x_{}'.format(split_value[-1]))
+                            else:
+                                self.b_1[projection['index'] - 1] += coef * self.t ** int(split_value[-1])
+                            continue
+                        moments = indeces[cur_order]
+                        dim = len(moments)
+                        basis = np.eye(dim, dtype=int)
+                        moments_repr = {moments[i]: basis[:, [i]] for i in range(dim)}
+                        order_matrix = sym.Matrix()    # матрица представлений шафл-элементов текущего порядка
+                        order_shuffle_basis = []      # шафл-элементы текущего порядка
+                        previous_elements = []
+                        for prev_order in orders:
+                            if prev_order > cur_order:
+                                break
+                            for proj in projections[prev_order]:
+                                previous_elements.append(proj)
+                        all_combinations = calculate_combinations(cur_order, previous_elements)
+                        for combination in all_combinations:
+                            basis_elem = ''
+                            shuffle_res = ''
+                            items_len = len(combination)
+                            if items_len == 1:
+                                shuffle_res = calc_shuffle_lin_comb(x=previous_elements[0]['algebra_repr'],
+                                                                    x_count=combination[0])
+                                proj_index = previous_elements[0]['index']
+                                basis_elem = (str(proj_index) + (combination[0] - 1) * '*{}'.format(proj_index))
+                            else:
+                                for ind in range(items_len - 1):
+                                    if ind == 0:
+                                        shuffle_res = calc_shuffle_lin_comb(
+                                            previous_elements[0]['algebra_repr'],
+                                            previous_elements[1]['algebra_repr'],
+                                            combination[0],
+                                            combination[1]
+                                            )
+                                        if combination[0]:
+                                            proj_index = previous_elements[0]['index']
+                                            basis_elem += (str(proj_index) + (combination[0] - 1) * '*{}'.format(
+                                                proj_index))
+                                            if combination[1]:
+                                                basis_elem += '*'
+                                        if combination[1]:
+                                            proj_index = previous_elements[1]['index']
+                                            basis_elem += str(proj_index) + (combination[1] - 1) * '*{}'.format(
+                                                proj_index)
+                                    else:
+                                        shuffle_res = calc_shuffle_lin_comb(
+                                            shuffle_res,
+                                            previous_elements[ind + 1]['algebra_repr'],
+                                            1,
+                                            combination[ind + 1]
+                                        )
+                                        if combination[ind + 1]:
+                                            proj_index = previous_elements[ind + 1]['index']
+                                            if basis_elem:
+                                                basis_elem += '*'
+                                            basis_elem += str(proj_index) + (combination[ind + 1] - 1) * '*{}'.format(proj_index)
+                            order_shuffle_basis.append(basis_elem)
+                            shuffle_res_repr = sym.zeros(dim, 1)
+                            shuffle_split = shuffle_res.split('|')
+                            for shuffle_elem in shuffle_split:
+                                if 'x' not in shuffle_elem:
+                                    coef = sym.Rational('1')
+                                    if shuffle_elem.startswith('-'):
+                                        coef *= -1
+                                        moment = shuffle_elem[1:]
+                                    else:
+                                        moment = shuffle_elem
+                                else:
+                                    split = shuffle_elem.split('x')
+                                    coef, moment = sym.Rational(split[0]), split[1]
+                                shuffle_res_repr += coef * sym.Matrix(moments_repr[moment])
+                            order_matrix = order_matrix.row_join(shuffle_res_repr)
+                        algebra_repr = sym.zeros(dim, 1)
+                        for elem in value:
+                            if fliess:
+                                if 'x' in elem:
+                                    element = elem.split('x')
+                                    element[-1] = element[-1][2:]
+                                else:
+                                    if elem.startswith('-'):
+                                        element = ['-' + elem[3:]]
+                                    else:
+                                        element = [elem[2:]]
+                            else:
+                                element = '.'.join(elem.split('.')[:-1])
+                                element = element.split('x')
+                            if len(element) == 1:
+                                if elem.startswith('-'):
+                                    algebra_repr -= sym.Matrix(moments_repr[element[0][1:]])
+                                else:
+                                    algebra_repr += sym.Matrix(moments_repr[element[0]])
+                            else:
+                                coef = element[0]
+                                algebra_repr += sym.Rational(coef) * sym.Matrix(moments_repr[element[1]])
+                        shuffle_repr = order_matrix.LUsolve(algebra_repr)
+                        for i in range(len(shuffle_repr)):
+                            if shuffle_repr[i]:
+                                basis_elem = order_shuffle_basis[i]
+                                basis_elem = basis_elem.split('*')
+                                elem_res = 1
+                                for e in basis_elem:
+                                    elem_res *= sym.Symbol('x{}'.format(e))
+                                if fliess:
+                                    if decomp_index == '0':
+                                        self.b_0[projection['index'] - 1] += shuffle_repr[i] * elem_res
+                                    else:
+                                        self.b_1[projection['index'] - 1] += shuffle_repr[i] * elem_res
+                                else:
+                                    self.b_1[projection['index'] - 1] += -shuffle_repr[i] * self.t**int(decomp_index) * elem_res
+
+    @staticmethod
+    def phi(projection):
+        if projection == '0':
+            return 0, 0
+        else:
+            order = int(projection)
+            coef = sym.Rational(order)
+            return coef, str(order - 1)
+
+    @staticmethod
+    def xi(projection):
+        if projection.endswith('0'):
+            if len(projection) == 1:
+                return 'e'
+            return projection[:-2]
+        return 0
+
+    def get_stationary_projections(self):
+        for key, value in self.projections.items():
+            for proj in value:
+                addends = proj['algebra_repr'].split('|')
+                result_phi = ''
+                result_xi = ''
+                for addend in addends:
+                    if 'x' in addend:
+                        coef, element = addend.split('x')
+                        coef = sym.Rational(coef)
+                    else:
+                        if addend.startswith('-'):
+                            coef = sym.Rational(-1)
+                            element = addend[1:]
+                        else:
+                            coef = sym.Rational(1)
+                            element = addend
+                    xi_proj = self.xi(element)
+                    if xi_proj != 0:
+                        result_xi += f'|{coef}x{xi_proj}'
+                    for index, order in enumerate(element):
+                        if order != '.':
+                            new_elem = list(element)
+                            elem_coef, new_order = self.phi(order)
+                            new_elem[index] = new_order
+                            if elem_coef != 0:
+                                result_phi += f'|{coef * elem_coef}x{"".join(new_elem)}'
+                proj['phi_prime'] = result_phi[1:]
+                proj['xi_prime'] = result_xi[1:]
+
+    def calc_b_0_stationary(self):
+        """
+        Подсчет аппроксимирующей системы.
+        """
+        projections = self.projections
+        with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/moments_grading.pickle'), 'rb') as f:
+            indeces = pickle.load(f)
+        orders = list(projections.keys())
+        for order in orders:
+            order_projections = projections[order]
+            for projection in order_projections:
+                # группировка моментов по одинаковому последнему индексу и сортировка по нему
+                # for value in projection['algebra_repr'].split('|'):
+                cur_order = order - 1
+                if cur_order == 0 and not projection['phi_prime']:
+                    continue
+                moments = indeces[cur_order]
+                dim = len(moments)
+                basis = np.eye(dim, dtype=int)
+                moments_repr = {moments[i]: basis[:, [i]] for i in range(dim)}
+                order_matrix = sym.Matrix()    # матрица представлений шафл-элементов текущего порядка
+                order_shuffle_basis = []      # шафл-элементы текущего порядка
+                previous_elements = []
+                for prev_order in orders:
+                    if prev_order > cur_order:
+                        break
+                    for proj in projections[prev_order]:
+                        previous_elements.append(proj)
+                if not previous_elements:
+                    continue
+                all_combinations = calculate_combinations(cur_order, previous_elements)
+                for combination in all_combinations:
+                    basis_elem = ''
+                    shuffle_res = ''
+                    items_len = len(combination)
+                    if items_len == 1:
+                        shuffle_res = calc_shuffle_lin_comb(x=previous_elements[0]['algebra_repr'],
+                                                            x_count=combination[0])
+                        proj_index = previous_elements[0]['index']
+                        basis_elem = (str(proj_index) + (combination[0] - 1) * '*{}'.format(proj_index))
+                    else:
+                        for ind in range(items_len - 1):
+                            if ind == 0:
+                                shuffle_res = calc_shuffle_lin_comb(
+                                    previous_elements[0]['algebra_repr'],
+                                    previous_elements[1]['algebra_repr'],
+                                    combination[0],
+                                    combination[1]
+                                )
+                                if combination[0]:
+                                    proj_index = previous_elements[0]['index']
+                                    basis_elem += (str(proj_index) + (combination[0] - 1) * '*{}'.format(
+                                        proj_index))
+                                    if combination[1]:
+                                        basis_elem += '*'
+                                if combination[1]:
+                                    proj_index = previous_elements[1]['index']
+                                    basis_elem += str(proj_index) + (combination[1] - 1) * '*{}'.format(
+                                        proj_index)
+                            else:
+                                shuffle_res = calc_shuffle_lin_comb(
+                                    shuffle_res,
+                                    previous_elements[ind + 1]['algebra_repr'],
+                                    1,
+                                    combination[ind + 1]
+                                )
+                                if combination[ind + 1]:
+                                    proj_index = previous_elements[ind + 1]['index']
+                                    if basis_elem:
+                                        basis_elem += '*'
+                                    basis_elem += str(proj_index) + (combination[ind + 1] - 1) * '*{}'.format(proj_index)
+                    order_shuffle_basis.append(basis_elem)
+                    shuffle_res_repr = sym.zeros(dim, 1)
+                    shuffle_split = shuffle_res.split('|')
+                    for shuffle_elem in shuffle_split:
+                        if 'x' not in shuffle_elem:
+                            coef = sym.Rational('1')
+                            if shuffle_elem.startswith('-'):
+                                coef *= -1
+                                moment = shuffle_elem[1:]
+                            else:
+                                moment = shuffle_elem
+                        else:
+                            split = shuffle_elem.split('x')
+                            coef, moment = sym.Rational(split[0]), split[1]
+                        shuffle_res_repr += coef * sym.Matrix(moments_repr[moment])
+                    order_matrix = order_matrix.row_join(shuffle_res_repr)
+                algebra_repr = sym.zeros(dim, 1)
+                for elem in projection['phi_prime'].split('|'):
+                    if not elem:
+                        continue
+                    element = elem.split('x')
+                    if len(element) == 1:
+                        if elem.startswith('-'):
+                            algebra_repr -= sym.Matrix(moments_repr[element[0][1:]])
+                        else:
+                            algebra_repr += sym.Matrix(moments_repr[element[0]])
+                    else:
+                        coef = element[0]
+                        algebra_repr += sym.Rational(coef) * sym.Matrix(moments_repr[element[1]])
+                try:
+                    shuffle_repr = order_matrix.LUsolve(algebra_repr)
+                except Exception as e:
+                    self.b_0_stationary = None
+                    return
+                for i in range(len(shuffle_repr)):
+                    if shuffle_repr[i]:
+                        basis_elem = order_shuffle_basis[i]
+                        basis_elem = basis_elem.split('*')
+                        elem_res = 1
+                        for e in basis_elem:
+                            elem_res *= sym.Symbol('x{}'.format(e))
+                        self.b_0_stationary[projection['index'] - 1] += -shuffle_repr[i] * elem_res
+
+    def calc_b_1_stationary(self):
+        """
+        Подсчет аппроксимирующей системы.
+        """
+        projections = self.projections
+        with open(os.path.join(BASE_DIR, 'api/nonlinear_moments/moments_grading.pickle'), 'rb') as f:
+            indeces = pickle.load(f)
+        orders = list(projections.keys())
+        for order in orders:
+            order_projections = projections[order]
+            for projection in order_projections:
+                # группировка моментов по одинаковому последнему индексу и сортировка по нему
+                # for value in projection['algebra_repr'].split('|'):
+                cur_order = order - 1
+                if projection['xi_prime'].endswith('e'):
+                    split_value = projection['xi_prime'].split('x')
+                    if len(split_value) == 2:
+                        self.b_1_stationary[projection['index'] - 1] += sym.Rational(split_value[0])
+                    else:
+                        self.b_1_stationary[projection['index'] - 1] += sym.Rational(1)
+                    continue
+                if not projection['xi_prime'] or (cur_order == 0 and projection['xi_prime'].endswith('0')):
+                    continue
+                moments = indeces[cur_order]
+                dim = len(moments)
+                basis = np.eye(dim, dtype=int)
+                moments_repr = {moments[i]: basis[:, [i]] for i in range(dim)}
+                order_matrix = sym.Matrix()    # матрица представлений шафл-элементов текущего порядка
+                order_shuffle_basis = []      # шафл-элементы текущего порядка
+                previous_elements = []
+                for prev_order in orders:
+                    if prev_order > cur_order:
+                        break
+                    for proj in projections[prev_order]:
+                        previous_elements.append(proj)
+                all_combinations = calculate_combinations(cur_order, previous_elements)
+                for combination in all_combinations:
+                    basis_elem = ''
+                    shuffle_res = ''
+                    items_len = len(combination)
+                    if items_len == 1:
+                        shuffle_res = calc_shuffle_lin_comb(x=previous_elements[0]['algebra_repr'],
+                                                            x_count=combination[0])
+                        proj_index = previous_elements[0]['index']
+                        basis_elem = (str(proj_index) + (combination[0] - 1) * '*{}'.format(proj_index))
+                    else:
+                        for ind in range(items_len - 1):
+                            if ind == 0:
+                                shuffle_res = calc_shuffle_lin_comb(
+                                    previous_elements[0]['algebra_repr'],
+                                    previous_elements[1]['algebra_repr'],
+                                    combination[0],
+                                    combination[1]
+                                )
+                                if combination[0]:
+                                    proj_index = previous_elements[0]['index']
+                                    basis_elem += (str(proj_index) + (combination[0] - 1) * '*{}'.format(
+                                        proj_index))
+                                    if combination[1]:
+                                        basis_elem += '*'
+                                if combination[1]:
+                                    proj_index = previous_elements[1]['index']
+                                    basis_elem += str(proj_index) + (combination[1] - 1) * '*{}'.format(
+                                        proj_index)
+                            else:
+                                shuffle_res = calc_shuffle_lin_comb(
+                                    shuffle_res,
+                                    previous_elements[ind + 1]['algebra_repr'],
+                                    1,
+                                    combination[ind + 1]
+                                )
+                                if combination[ind + 1]:
+                                    proj_index = previous_elements[ind + 1]['index']
+                                    if basis_elem:
+                                        basis_elem += '*'
+                                    basis_elem += str(proj_index) + (combination[ind + 1] - 1) * '*{}'.format(proj_index)
+                    order_shuffle_basis.append(basis_elem)
+                    shuffle_res_repr = sym.zeros(dim, 1)
+                    shuffle_split = shuffle_res.split('|')
+                    for shuffle_elem in shuffle_split:
+                        if 'x' not in shuffle_elem:
+                            coef = sym.Rational('1')
+                            if shuffle_elem.startswith('-'):
+                                coef *= -1
+                                moment = shuffle_elem[1:]
+                            else:
+                                moment = shuffle_elem
+                        else:
+                            split = shuffle_elem.split('x')
+                            coef, moment = sym.Rational(split[0]), split[1]
+                        if moment == 'e':
+                            shuffle_res_repr += coef * sym.Matrix([1] * cur_order)
+                        else:
+                            shuffle_res_repr += coef * sym.Matrix(moments_repr[moment])
+                    order_matrix = order_matrix.row_join(shuffle_res_repr)
+                algebra_repr = sym.zeros(dim, 1)
+                for elem in projection['xi_prime'].split('|'):
+                    element = elem.split('x')
+                    if len(element) == 1:
+                        if elem.startswith('-'):
+                            if element[0] == 'e':
+                                algebra_repr -= sym.Matrix([1] * cur_order)
+                            else:
+                                algebra_repr -= sym.Matrix(moments_repr[element[0][1:]])
+                        else:
+                            if element[0] == 'e':
+                                algebra_repr += sym.Matrix([1] * cur_order)
+                            else:
+                                algebra_repr += sym.Matrix(moments_repr[element[0]])
+                    else:
+                        coef = element[0]
+                        if element[1] == 'e':
+                            algebra_repr += sym.Rational(coef) * sym.Matrix([1] * cur_order)
+                        else:
+                            algebra_repr += sym.Rational(coef) * sym.Matrix(moments_repr[element[1]])
+                try:
+                    shuffle_repr = order_matrix.LUsolve(algebra_repr)
+                except Exception as e:
+                    self.b_1_stationary = None
+                    return
+                for i in range(len(shuffle_repr)):
+                    if shuffle_repr[i]:
+                        basis_elem = order_shuffle_basis[i]
+                        basis_elem = basis_elem.split('*')
+                        elem_res = 1
+                        for e in basis_elem:
+                            elem_res *= sym.Symbol('x{}'.format(e))
+                        self.b_1_stationary[projection['index'] - 1] += -shuffle_repr[i] * elem_res
+
     def calc_approx_system(self, fliess=False):
         """
         Подсчет аппроксимирующей системы.
         """
         projections = self.calculate_lie_projections(fliess)
-        start = time.time()
+        if not fliess:
+            self.get_stationary_projections()
+            self.calc_b_0_stationary()
+            if self.b_0_stationary:
+                self.calc_b_1_stationary()
         if fliess:
             with open(os.path.join(BASE_DIR, 'api/fliess/moments_grading.pickle'), 'rb') as f:
                 indeces = pickle.load(f)
@@ -836,5 +1328,3 @@ class ControlSystem:
                                         self.b_1[projection['index'] - 1] += shuffle_repr[i] * elem_res
                                 else:
                                     self.b_1[projection['index'] - 1] += -shuffle_repr[i] * self.t**int(decomp_index) * elem_res
-        end = time.time()
-        print('System approximation:', round(end - start, 2), 'sec.')

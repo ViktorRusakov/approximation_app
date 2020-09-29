@@ -12,7 +12,7 @@ def lie_bracket(element_1, element_2):
     влево). На выходе получаем строку, в которой закодирован результат взятия скобки, а именно: каждое слагаемое
     представлено знаком перед ним (если знака нет, подразумеваем, что это '+') и последовательностью индексов,
     слагаемые разделены символом '|'.
-        
+
         Пример 1:
             lie_bracket('1.2', '3') = [[xi_1, xi_2], xi_3] = '1.2.3|-2.1.3|-3.1.2|3.2.1', где
 
@@ -64,7 +64,7 @@ def calculate_lie_elements(max_order):
         Подсчет Ли-элементов до заданного порядка включительно (тождество Якоби не учитываем). На выходе получаем
         словарь, где ключ это порядок, а значение - словарь, в котором ключ это закодированный вид
         Ли-элемента, а значение - его представление в пространстве R^p (в виде numpy вектора).
-        
+
         Пример:
         max_order = 3
         res = calculate_lie_elements(max_order) =>
@@ -87,7 +87,7 @@ def calculate_lie_elements(max_order):
             1) '1.2' = [xi_1, xi_2]
             2) '1.2]3]5' = [[[xi_1, xi_2], xi_3], xi_5]
     """
-    
+
     res = {}
     with open('api/moments_grading.pickle', 'rb') as f:
         moments = pickle.load(f)
@@ -162,6 +162,9 @@ def get_basis_lie_elements(max_order):
 class LieElementsNotFound(Exception):
     pass
 
+
+class SystemIsTooDeep(Exception):
+    pass
 
 # start = time.time()
 # test = get_basis_lie_elements(13)
